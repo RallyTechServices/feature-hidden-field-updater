@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Feature Hidden Field Updater</title>
+    <!--  (c) 2015 Rally Software Development Corp.  All Rights Reserved. -->
+    <!--  Build Date: Tue Nov 24 2015 07:33:01 GMT-0700 (MST) -->
+    
+    <script type="text/javascript">
+        var APP_BUILD_DATE = "Tue Nov 24 2015 07:33:01 GMT-0700 (MST)";
+        var CHECKSUM = 12135276435;
+    </script>
+    
+    <script type="text/javascript" src="/apps/2.0/sdk.js"></script>
+
+    <script type="text/javascript">
+        Rally.onReady(function() {
+             
+/**
+ * A link that pops up a version dialog box
+ */
+
+Ext.define('Rally.technicalservices.InfoLink',{
+    extend: 'Rally.ui.dialog.Dialog',
+    alias: 'widget.tsinfolink',
+    
+    /**
+     * @cfg {String} informationHtml
+     * Additional text to be displayed on the popup dialog (for exmaple,
+     * to add a description of the app's use or functionality)
+     */
+    informationHtml: null,
+    
+    /**
+     * 
+     * cfg {String} title
+     * The title for the dialog box
+     */
+    title: "Build Information",
+    
+    defaults: { padding: 5, margin: 5 },
+
+    closable: true,
+     
+    draggable: true,
+
+    autoShow: true,
+   
+    width: 350, 
+    
+    initComponent: function() {
+        var id = Ext.id(this);
+        this.title =  "<span class='icon-help'> </span>" + this.title;
+        this.callParent(arguments);
+    },
+    
+    _generateChecksum: function(string){
+        var chk = 0x12345678,
+            i;
+        string = string.replace(/var CHECKSUM = .*;/,"");
+        string = string.replace(/\s/g,"");  //Remove all whitespace from the string.
+        
+        for (i = 0; i < string.length; i++) {
+            chk += (string.charCodeAt(i) * i);
+        }
+    
+        return chk;
+    },
+    
+    _checkChecksum: function(container) {
+        var deferred = Ext.create('Deft.Deferred');
+        console.log("_checkChecksum", container);
+        var me = this;
+        
+        Ext.Ajax.request({
+            url: document.URL,
+            params: {
+                id: 1
+            },
+            success: function (response) {
+                text = response.responseText;
+                if ( CHECKSUM ) {
+                    if ( CHECKSUM !== me._generateChecksum(text) ) {
+                        console.log("Checksums don't match!");
+                        deferred.resolve(false);
+                        return;
+                    }
+                }
+                deferred.resolve(true);
+            }
+        });
+        
+        return deferred.promise;
+    },
+    
+    afterRender: function() {
+        var app = Rally.getApp();
+        
+        if (! app.isExternal() ) {
+                
+            this._checkChecksum(app).then({
+                scope: this,
+                success: function(result){
+                    if ( !result ) {
+                        this.addDocked({
+                            xtype:'container',
+                            cls: 'build-info',
+                            padding: 2,
+                            html:'<span class="icon-warning"> </span>Checksums do not match'
+                        });
+                    }
+                },
+                failure: function(msg){
+                    console.log("oops:",msg);
+                }
+            });
+        } else {
+            this.addDocked({
+                xtype:'container',
+                cls: 'build-info',
+                padding: 2,
+                html:'... Running externally'
+            });
+        }
+        this.callParent(arguments);
+    },
+    
+    beforeRender: function() {
+        var me = this;
+        this.callParent(arguments);
+
+        if (this.informationHtml) {
+            this.addDocked({
+                xtype: 'component',
+                componentCls: 'intro-panel',
+                padding: 2,
+                html: this.informationHtml
+            });
+        }
+        
+        this.addDocked({
+            xtype:'container',
+            cls: 'build-info',
+            padding: 2,
+            html:"This app was created by the Rally Technical Services Team."
+        });
+        
+        if ( APP_BUILD_DATE ) {
+            this.addDocked({
+                xtype:'container',
+                cls: 'build-info',
+                padding: 2,
+                html:'Build date/time: ' + APP_BUILD_DATE
+            });
+        }
+    }
+});
+
+/*
+ */
+Ext.define('Rally.technicalservices.Logger',{
+    constructor: function(config){
+        Ext.apply(this,config);
+    },
+    log: function(args){
+        var timestamp = "[ " + Ext.util.Format.date(new Date(), "Y-m-d H:i:s.u") + " ]";
+        //var output_args = arguments;
+        //output_args.unshift( [ "[ " + timestamp + " ]" ] );
+        //output_args = Ext.Array.push(output_args,arguments);
+        
+        var output_args = [];
+        output_args = Ext.Array.push(output_args,[timestamp]);
+        output_args = Ext.Array.push(output_args, Ext.Array.slice(arguments,0));
+
+        window.console && console.log.apply(console,output_args);
+    }
+
+});
+
+Ext.define("feature-hidden-field-updater", {
+    extend: 'Rally.app.App',
+    componentCls: 'app',
+    logger: new Rally.technicalservices.Logger(),
+    defaults: { margin: 10 },
+    config: {
+        defaultSettings: {
+            hiddenStartDateField: 'c_BenchmarkDate',
+            hiddenPlannedDateField: null,
+            hiddenDeployDateField: null
+        }
+    },
+    items: [
+        {xtype:'container',itemId:'selector_box',tpl:'Hello, <tpl>{_refObjectName}</tpl>'},
+        {xtype:'container',itemId:'display_box'}
+    ],
+    featureFetch: ['FormattedID','Name'],
+    portfolioItemModelName: 'PortfolioItem/Feature',
+    portfolioItemModel: null,
+
+    launch: function() {
+        this._fetchLowestPortfolioItemModel().then({
+            scope: this,
+            success: function(modelName){
+                console.log('model',modelName);
+                this.portfolioItemModelName = modelName;
+                Rally.data.ModelFactory.getModel({
+                    type: modelName,
+                    success: function(model) {
+                        this.portfolioItemModel = model;
+                        this._addReleaseSelector();
+                    },
+                    failure: function(){
+                        Rally.ui.notify.Notifier.showError({message: "Failed to retrieve model: " + modelName});
+                    },
+                    scope: this
+                });
+            },
+            failure: function(msg){
+                Rally.ui.notify.Notifier.showError({message: "Failed to fetch Portfolio Item Types: " + msg});
+            }
+        });
+
+    },
+    _addReleaseSelector: function(){
+        this.down('#selector_box').removeAll();
+        this.down('#selector_box').add({
+            xtype: 'rallyreleasecombobox',
+            minWidth: 400,
+            multiSelect: true,
+            valueField: 'Name',
+            listeners: {
+                change: this._fetchReleaseFeatures,
+                scope: this
+            }
+        });
+    },
+    _fetchLowestPortfolioItemModel: function(){
+        var deferred = Ext.create('Deft.Deferred');
+
+        Ext.create('Rally.data.wsapi.Store',{
+            model: 'TypeDefinition',
+            fetch: ['TypePath'],
+            autoLoad: true,
+            filters: [{
+                property: 'TypePath',
+                operator: 'contains',
+                value: 'PortfolioItem/'
+            },{
+                property: 'Ordinal',
+                value: 0
+            }]
+        }).load({
+            callback: function(records, operation){
+                if (operation.wasSuccessful()){
+                    deferred.resolve(records[0].get('TypePath'));
+                } else {
+                    deferred.reject(operation.error.errors.join(','));
+                }
+
+            }
+        });
+        return deferred;
+    },
+    _fetchReleaseFeatures: function(cb){
+        this.logger.log('_fetchReleaseFeatures', cb.getValue());
+
+        var filters = Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; })),
+            fields = this.featureFetch.concat([this.getSetting('hiddenStartDateField')]);
+
+        var store = Ext.create('Rally.data.wsapi.Store', {
+            model: this.portfolioItemModelName,
+            fetch: fields,
+            filters: filters,
+            limit: 'Infinity',
+            listeners: {
+                scope: this,
+                load: function(records){
+                    console.log('load records', records);
+                }
+            }
+
+        });
+        this._createFeatureGrid(store);
+
+    },
+    getHiddenStartDateField: function(){
+        return this.getSetting('hiddenStartDateField');
+    },
+    getHiddenPlannedDateField: function(){
+        return this.getSetting('hiddenPlannedDateField');
+    },
+    getHiddenDeployDateField: function(){
+        return this.getSetting('hiddenDeployDateField')
+    },
+    getFieldDisplayName: function(f){
+        return (this.portfolioItemModel.getField(f) && this.portfolioItemModel.getField(f).displayName) || f;
+    },
+    _getBulkConfigItems: function(){
+        var items = [];
+
+        if (this.getHiddenStartDateField()){
+            items.push({
+                xtype: 'rallyrecordmenuitembulksethiddendate' ,
+                dateField: this.portfolioItemModel.getField(this.getHiddenStartDateField())
+            });
+        }
+
+        if (this.getHiddenPlannedDateField() || this.getHiddenDeployDateField()){
+            items.push({
+                xtype: 'rallyrecordmenuitembulkupdatetransitiondates',
+                plannedDateField: this.getHiddenPlannedDateField(),
+                deployDateField: this.getHiddenDeployDateField()
+            });
+        }
+        return items;
+    },
+    _createFeatureGrid: function(store){
+        this.down('#display_box').removeAll();
+
+        var bulkConfigItems = this._getBulkConfigItems();
+
+        this.down('#display_box').add({
+            xtype: 'rallygrid',
+            store: store,
+            columnCfgs: this._getColumnCfgs(),
+            enableBulkEdit: true,
+            bulkEditConfig: {
+                items: bulkConfigItems
+            }
+
+        });
+    },
+    _getHiddenFields: function(){
+        var hiddenFields = [];
+
+        if (this.getHiddenStartDateField()){
+            hiddenFields.push(this.getHiddenStartDateField());
+        }
+        if (this.getHiddenPlannedDateField()){
+            hiddenFields.push(this.getHiddenPlannedDateField());
+        }
+        if (this.getHiddenDeployDateField()){
+            hiddenFields.push(this.getHiddenDeployDateField());
+        }
+        return hiddenFields;
+    },
+    _getColumnCfgs: function(){
+        var cols = [],
+            hiddenFields = this._getHiddenFields(),
+            fields = this.featureFetch.concat(hiddenFields);
+
+         _.each(fields, function(f){
+                var col = { dataIndex: f, text: f };
+                if (Ext.Array.contains(hiddenFields, f)){
+                    col.dataIndex = 'ObjectID';
+                    col.text = this.getFieldDisplayName(f);
+                    col.align = 'left';
+                    col.renderer = function(v,m,r){
+                        return Rally.util.DateTime.formatWithDefault(r.get(f));
+                    }
+                }
+                cols.push(col);
+            }, this);
+        return cols;
+
+    },
+    getSettingsFields: function(){
+        return Rally.technicalservices.Settings.getFields(this.portfolioItemModelName);
+    },
+    getOptions: function() {
+        return [
+            {
+                text: 'About...',
+                handler: this._launchInfo,
+                scope: this
+            }
+        ];
+    },
+    
+    _launchInfo: function() {
+        if ( this.about_dialog ) { this.about_dialog.destroy(); }
+        this.about_dialog = Ext.create('Rally.technicalservices.InfoLink',{});
+    },
+    
+    isExternal: function(){
+        return typeof(this.getAppId()) == 'undefined';
+    },
+    
+    //onSettingsUpdate:  Override
+    onSettingsUpdate: function (settings){
+        this.logger.log('onSettingsUpdate',settings);
+        Ext.apply(this, settings);
+        this.launch();
+    }
+});
+
+(function() {
+    var Ext = window.Ext4 || window.Ext;
+
+    Ext.define('Rally.ui.combobox.HiddenDateFieldComboBox', {
+        requires: [],
+        extend: 'Rally.ui.combobox.FieldComboBox',
+        alias: 'widget.tshiddendatefieldcombobox',
+
+        _isNotHidden: function(field) {
+            //We only want date field types that are writable and also we want to include hidden fields
+            if (field && !field.readOnly && field.attributeDefinition &&
+                field.attributeDefinition.AttributeType === 'DATE'){
+                return true;
+            }
+            return false;
+
+        }
+    });
+})();
+Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
+    alias: 'widget.rallyrecordmenuitembulkupdatetransitiondates',
+    extend: 'Rally.ui.menu.bulk.MenuItem',
+    requires: ['Rally.ui.notify.Notifier'],
+
+    config: {
+        text: 'Update Transition Dates',
+        handler: function() {
+            this._onBulkUpdateClicked();
+        },
+        predicate: function(records) {
+            return _.every(records, function(record) {
+                return record.self.isArtifact() || record.self.isTimebox();
+            });
+        },
+
+        saveRecords: function(records, originalRecords) {
+
+            var promises = _.map(records, function(record){
+                return this._saveRecord(record, args);
+            }, this);
+
+            Deft.Promise.all(promises).then({
+                scope: this,
+                success: function(results){
+                    var errorMessage = null,
+                        successfulRecords = [];
+
+                    _.each(results, function(r){
+                        if (r.result){
+                            successfulRecords.push(r);
+                        } else {
+                            errorMessage = r.errorMessage;
+                        }
+                        this._showMessage(records, successfulRecords, errorMessage);
+                    }, this);
+                }
+            });
+
+
+        }
+    },
+    _saveRecord: function(record){
+        var deferred = Ext.create('Deft.Deferred');
+
+        record.save({
+            callback: function(result, operation){
+                if (operation.wasSuccessful()){
+                    deferred.resolve({result: result, errorMessage: null});
+                } else {
+                    deferred.resolve({result: null, errorMessage: operation.error.errors.join(',')});
+                }
+            }
+        });
+        return deferred;
+    },
+    _showMessage: function(records, successfulRecords, errorMessage) {
+        var me = this;
+
+        var unsuccessfulRecords = _.difference(records, successfulRecords);
+        if(successfulRecords.length) {
+            me.onSuccess(successfulRecords, unsuccessfulRecords, errorMessage);
+        } else {
+            Rally.ui.notify.Notifier.showError({
+                message: resultSet.message
+            });
+            Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
+        }
+
+    },
+    _onBulkUpdateClicked: function() {
+        if (this.onBeforeAction(this.records) === false) {
+            return;
+        }
+        var me = this;
+        this._fetchTransitionDates(this.records).then({
+            success: function(updatedRecords){
+                me.saveRecords(updatedRecords, me.records);
+            }
+        });
+    },
+    _fetchTransitionDates: function(records){
+
+    },
+    /**
+     * @override
+     * @inheritdoc
+     */
+    onSuccess: function (successfulRecords, unsuccessfulRecords, errorMessage) {
+
+        var message = successfulRecords.length + (successfulRecords.length === 1 ? ' item has been updated.' : ' items have been updated.');
+
+        if(successfulRecords.length === this.records.length) {
+            Rally.ui.notify.Notifier.show({
+                message: message + '.'
+            });
+        } else {
+            Rally.ui.notify.Notifier.showWarning({
+                message: message + ', but ' + unsuccessfulRecords.length + ' failed: ' + errorMessage
+            });
+        }
+        Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
+    }
+});
+
+Ext.define('Rally.ui.menu.bulk.SetHiddenDate', {
+    alias: 'widget.rallyrecordmenuitembulksethiddendate',
+    extend: 'Rally.ui.menu.bulk.MenuItem',
+    requires: ['Rally.ui.notify.Notifier'],
+
+    config: {
+        text: 'Set Planned Date...',
+        handler: function() {
+            this._onBulkSetHiddenDateClicked();
+        },
+        predicate: function(records) {
+            return _.every(records, function(record) {
+                return record.self.isArtifact() || record.self.isTimebox();
+            });
+        },
+
+        saveRecords: function(records, args) {
+
+            var promises = _.map(records, function(record){
+                return this._saveRecord(record, args);
+            }, this);
+
+            Deft.Promise.all(promises).then({
+                scope: this,
+                success: function(results){
+                    var successfulRecords = [],
+                        unsuccessfulRecords = [],
+                        errorMessage= '';
+
+                    _.each(results, function(r){
+                        if (r.successfulRecord){
+                            successfulRecords.push(r.successfulRecord);
+                        } else {
+                            unsuccessfulRecords.push(r.unsuccessfulRecord);
+                            errorMessage = r.operation && r.operation.error && r.operation.error.errors.join(',') || "Error updating record " + r.unsuccessfulRecord.get('FormattedID');
+                        }
+
+                    });
+                    this.onSuccess(successfulRecords, unsuccessfulRecords, args, errorMessage);
+                }
+            });
+
+
+        }
+    },
+    _saveRecord: function(record, args){
+        var deferred = Ext.create('Deft.Deferred');
+
+        record.set(args.field.name, args.value);
+
+        record.save({
+            callback: function(result, operation){
+                if (operation.wasSuccessful()){
+                    deferred.resolve({successfulRecord: record, unsuccessfulRecord: null});
+                } else {
+                    deferred.resolve({successfulRecord: null, unsuccessfulRecord: record, operation: operation});
+                }
+            }
+        });
+        return deferred;
+    },
+    _onBulkSetHiddenDateClicked: function() {
+        Ext.create('Rally.technicalservices.dialog.SetDateDialog', {
+            records: this.records,
+            dateField: this.dateField,
+            listeners: {
+                edit: this._onEdit,
+                scope: this
+            }
+        });
+    },
+
+    _onEdit: function(dialog, args) {
+        if (this.onBeforeAction(this.records) === false) {
+            return;
+        }
+        this.saveRecords(this.records, args);
+    },
+
+    /**
+     * @override
+     * @inheritdoc
+     */
+    onSuccess: function (successfulRecords, unsuccessfulRecords, args, errorMessage) {
+
+        var message = successfulRecords.length + (successfulRecords.length === 1 ? ' item has' : ' items have');
+
+
+            message += ' had ' + args.displayName;
+            if (args.value === null || args.value === '') {
+                message += ' removed';
+            } else {
+                message += ' changed to "' + (args.displayValue || args.value) + '"';
+            }
+
+        if(successfulRecords.length === this.records.length) {
+            Rally.ui.notify.Notifier.show({
+                message: message + '.'
+            });
+        } else {
+            Rally.ui.notify.Notifier.showWarning({
+                message: message + ', but ' + unsuccessfulRecords.length + ' failed: ' + errorMessage
+            });
+        }
+
+        var changes = {};
+        changes[args.field.name] = args.value;
+        Ext.callback(this.onActionComplete, null, [successfulRecords, unsuccessfulRecords, changes]);
+    }
+});
+    Ext.define('Rally.technicalservices.dialog.SetDateDialog', {
+        extend: 'Rally.ui.dialog.Dialog',
+        alias: 'widget.tssetdatedialog',
+
+        autoShow: true,
+        cls: 'bulk-edit-dialog',
+        closable: true,
+        draggable: true,
+        title: 'Set Planned Date',
+        width: 375,
+
+        config: {
+            /**
+             * @cfg {[Rally.data.Model]} records (required)
+             * The records to bulk edit
+             */
+            records: null
+        },
+
+        initComponent: function() {
+            this.callParent(arguments);
+
+            this.addEvents(
+                /**
+                 * @param Rally.ui.dialog.BulkEditDialog the dialog
+                 * @param Rally.data.wsapi.Field field the field being edited
+                 * @param {String|Number} the new value
+                 */
+                'edit'
+            );
+
+            this.add(
+                {
+                    xtype: 'component',
+                    cls: 'directions rui-info-label',
+                    renderTpl: Ext.create('Ext.XTemplate',
+                        'For the <tpl><b>{[values.recordCount]}</b></tpl> checked ',
+                        '<tpl if="recordCount === 1">item<tpl else>items</tpl> apply the following dates:'
+                    ),
+                    renderData: {
+                        recordCount: this.records.length
+                    }
+                },
+                {
+                    xtype: 'container',
+                    itemId: 'form-container',
+                    cls: 'form-container',
+                    items: [
+                        {
+                            xtype: 'rallydatefield',
+                            autoExpand: true,
+                            itemId: 'dateField',
+                            defaultSelectionPosition: null,
+                            emptyText: 'Select date...',
+                            listeners: {
+                                select: function(cmp) {
+                                    this.down('#applyButton').setDisabled(false);
+                                },
+                                scope: this
+                            }
+                        }
+                    ]
+                }
+            );
+
+            this.addDocked({
+                xtype: 'toolbar',
+                dock: 'bottom',
+                padding: '0 0 10 0',
+                layout: {
+                    type: 'hbox',
+                    pack: 'center'
+                },
+                ui: 'footer',
+                items: [
+                    {
+                        xtype: 'rallybutton',
+                        itemId: 'applyButton',
+                        text: 'Apply',
+                        cls: 'primary rly-small',
+                        disabled: true,
+                        handler:  this._onApplyClicked,
+                        scope: this
+                    },
+                    {
+                        xtype: 'rallybutton',
+                        text: 'Cancel',
+                        cls: 'secondary rly-small',
+                        handler: function() {
+                            this.close();
+                        },
+                        scope: this
+                    }
+                ]
+            });
+        },
+
+        afterRender: function() {
+            this.callParent(arguments);
+            this.down('#dateField').focus(false, 150);
+        },
+
+        _onApplyClicked: function() {
+            var val = Rally.util.DateTime.toIsoString(this.down('#dateField').getValue());
+            var args = {
+                field: this.dateField,
+                displayName: this.dateField.displayName,
+                value: val
+            };
+            this.fireEvent('edit', this, args);
+            this.close();
+        }
+    });
+
+Ext.define('Rally.technicalservices.Settings',{
+    singleton: true,
+
+    getFields: function(modelName){
+        var labelWidth = 150;
+        //todo make fields writable date fields only and show hidden fields
+
+        return [{
+            xtype: 'tshiddendatefieldcombobox',
+            name: 'hiddenStartDateField',
+            model: modelName,
+            labelWidth: labelWidth,
+            labelAlign: 'right',
+            fieldLabel: 'Set Start Date Field'
+        },{
+            xtype: 'tshiddendatefieldcombobox',
+            name: 'hiddenPlannedDateField',
+            labelWidth: labelWidth,
+            model: modelName,
+            labelAlign: 'right',
+            fieldLabel: 'Update Planned Date Field'
+        },{
+            xtype: 'tshiddendatefieldcombobox',
+            name: 'hiddenDeployDateField',
+            labelWidth: labelWidth,
+            model: modelName,
+            labelAlign: 'right',
+            fieldLabel: 'Update Deploy Date Field'
+        }];
+    }
+});
+
+            
+               Rally.launchApp('feature-hidden-field-updater', {
+                   name: 'Feature Hidden Field Updater'
+               });
+        });
+    </script>
+    
+    <style type="text/css">
+
+.app {
+}
+.tsinfolink {
+    position:absolute;
+    right:0px;
+    width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    text-align: center;
+    color: white;
+    background: #C0C0C0;
+    border-style: solid;
+    border-width: 1px;
+    margin-top: 25px;
+    margin-right: 5px;
+    cursor: pointer;
+}
+    </style>
+
+</head>
+<body></body>
+</html>
