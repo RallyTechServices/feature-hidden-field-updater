@@ -183,7 +183,7 @@ Ext.define("feature-hidden-field-updater", {
 
         var bulkConfigItems = this._getBulkConfigItems();
 
-        this.down('#display_box').add({
+        var grid = this.down('#display_box').add({
             xtype: 'rallygrid',
             store: store,
             columnCfgs: this._getColumnCfgs(),
@@ -207,6 +207,7 @@ Ext.define("feature-hidden-field-updater", {
                 permanentFilters: this._getReleaseFilters()
             }]
         });
+
     },
     _getHiddenFields: function(){
         var hiddenFields = [];
