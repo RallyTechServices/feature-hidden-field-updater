@@ -5,30 +5,39 @@ Ext.define("feature-hidden-field-updater", {
     defaults: { margin: 10 },
     config: {
         defaultSettings: {
-            hiddenStartDateField: 'c_BenchmarkDate',
-            hiddenPlannedDateField: null,
-            hiddenDeployDateField: null
+            hiddenStartDateField: '',
+            stateDateFields: {}
         }
     },
     items: [
-        {xtype:'container',itemId:'selector_box',tpl:'Hello, <tpl>{_refObjectName}</tpl>'},
+        {xtype:'container',itemId:'selector_box'},
         {xtype:'container',itemId:'display_box'}
     ],
-    featureFetch: ['FormattedID','Name'],
+    featureFetch: ['ObjectID','FormattedID','Name'],
     portfolioItemModelName: 'PortfolioItem/Feature',
     portfolioItemModel: null,
+    portfolioItemStates: undefined,
 
     launch: function() {
         this._fetchLowestPortfolioItemModel().then({
             scope: this,
             success: function(modelName){
-                console.log('model',modelName);
                 this.portfolioItemModelName = modelName;
                 Rally.data.ModelFactory.getModel({
                     type: modelName,
                     success: function(model) {
                         this.portfolioItemModel = model;
-                        this._addReleaseSelector();
+                        this._fetchStates(model).then({
+                            success: function(states){
+                                this.portfolioItemStates = states;
+                                this._addReleaseSelector();
+                            },
+                            failure: function(msg){
+                                Rally.ui.notify.Notifier.showError({message: "Failed to retrieve Portfolio Item States: " + msg});
+                            },
+                            scope: this
+
+                        });
                     },
                     failure: function(){
                         Rally.ui.notify.Notifier.showError({message: "Failed to retrieve model: " + modelName});
@@ -42,7 +51,37 @@ Ext.define("feature-hidden-field-updater", {
         });
 
     },
+    _fetchStates: function(model){
+        var deferred = Ext.create('Deft.Deferred');
+        model.getField('State').getAllowedValueStore().load({
+            callback: function(records, operation, success) {
+                if (operation.wasSuccessful()){
+                    deferred.resolve(records);
+                } else {
+                    deferred.reject(operation && operation.error && operation.error.errors.join(','));
+                }
+            }
+        });
+        return deferred;
+    },
+    _validateSettings: function(){
+        this.logger.log('_validateSettings', this.getHiddenStartDateField(), this.getStateDateFieldMapping());
+
+        if (Ext.Object.isEmpty(this.getStateDateFieldMapping()) && this.getHiddenStartDateField().length === 0){
+            return false;
+        }
+        return true;
+    },
     _addReleaseSelector: function(){
+
+        if (!this._validateSettings()){
+            this.down('#selector_box').add({
+                xtype: 'container',
+                html: "Please use the app settings to configure a Start Date field and/or State Field Mappings."
+            });
+            return;
+        }
+
         this.down('#selector_box').removeAll();
         this.down('#selector_box').add({
             xtype: 'rallyreleasecombobox',
@@ -77,41 +116,39 @@ Ext.define("feature-hidden-field-updater", {
                 } else {
                     deferred.reject(operation.error.errors.join(','));
                 }
-
             }
         });
         return deferred;
     },
     _fetchReleaseFeatures: function(cb){
-        this.logger.log('_fetchReleaseFeatures', cb.getValue());
+        this.logger.log('_fetchReleaseFeatures', cb.getValue(),_.values(this.getStateDateFieldMapping()));
 
         var filters = Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; })),
-            fields = this.featureFetch.concat([this.getSetting('hiddenStartDateField')]);
+            fields = this.featureFetch.concat([this.getHiddenStartDateField()]).concat(_.values(this.getStateDateFieldMapping()));
 
+        this.logger.log('fetch', fields);
         var store = Ext.create('Rally.data.wsapi.Store', {
             model: this.portfolioItemModelName,
             fetch: fields,
             filters: filters,
-            limit: 'Infinity',
             listeners: {
                 scope: this,
                 load: function(records){
                     console.log('load records', records);
                 }
             }
-
         });
         this._createFeatureGrid(store);
-
     },
     getHiddenStartDateField: function(){
         return this.getSetting('hiddenStartDateField');
     },
-    getHiddenPlannedDateField: function(){
-        return this.getSetting('hiddenPlannedDateField');
-    },
-    getHiddenDeployDateField: function(){
-        return this.getSetting('hiddenDeployDateField')
+    getStateDateFieldMapping: function(){
+        var setting = this.getSetting('stateDateFields');
+        if (Ext.isString(setting)){
+            setting = Ext.JSON.decode(setting);
+        }
+        return setting || {};
     },
     getFieldDisplayName: function(f){
         return (this.portfolioItemModel.getField(f) && this.portfolioItemModel.getField(f).displayName) || f;
@@ -126,11 +163,11 @@ Ext.define("feature-hidden-field-updater", {
             });
         }
 
-        if (this.getHiddenPlannedDateField() || this.getHiddenDeployDateField()){
+        if (!Ext.Object.isEmpty(this.getStateDateFieldMapping())){
             items.push({
                 xtype: 'rallyrecordmenuitembulkupdatetransitiondates',
-                plannedDateField: this.getHiddenPlannedDateField(),
-                deployDateField: this.getHiddenDeployDateField()
+                stateDateFields: this.getStateDateFieldMapping(),
+                states: this.portfolioItemStates
             });
         }
         return items;
@@ -157,12 +194,10 @@ Ext.define("feature-hidden-field-updater", {
         if (this.getHiddenStartDateField()){
             hiddenFields.push(this.getHiddenStartDateField());
         }
-        if (this.getHiddenPlannedDateField()){
-            hiddenFields.push(this.getHiddenPlannedDateField());
-        }
-        if (this.getHiddenDeployDateField()){
-            hiddenFields.push(this.getHiddenDeployDateField());
-        }
+
+        _.each(this.getStateDateFieldMapping(), function(field, state){
+            hiddenFields.push(field);
+        });
         return hiddenFields;
     },
     _getColumnCfgs: function(){
@@ -171,22 +206,24 @@ Ext.define("feature-hidden-field-updater", {
             fields = this.featureFetch.concat(hiddenFields);
 
          _.each(fields, function(f){
-                var col = { dataIndex: f, text: f };
-                if (Ext.Array.contains(hiddenFields, f)){
-                    col.dataIndex = 'ObjectID';
-                    col.text = this.getFieldDisplayName(f);
-                    col.align = 'left';
-                    col.renderer = function(v,m,r){
-                        return Rally.util.DateTime.formatWithDefault(r.get(f));
-                    }
-                }
-                cols.push(col);
+             if (f != 'ObjectID'){
+                 var col = { dataIndex: f, text: f };
+                 if (Ext.Array.contains(hiddenFields, f)){
+                     col.dataIndex = 'ObjectID';
+                     col.text = this.getFieldDisplayName(f);
+                     col.align = 'left';
+                     col.renderer = function(v,m,r){
+                         return Rally.util.DateTime.formatWithDefault(r.get(f));
+                     }
+                 }
+                 cols.push(col);
+             }
             }, this);
         return cols;
 
     },
     getSettingsFields: function(){
-        return Rally.technicalservices.Settings.getFields(this.portfolioItemModelName);
+        return Rally.technicalservices.Settings.getFields(this.portfolioItemModelName, this.portfolioItemStates);
     },
     getOptions: function() {
         return [
@@ -211,6 +248,6 @@ Ext.define("feature-hidden-field-updater", {
     onSettingsUpdate: function (settings){
         this.logger.log('onSettingsUpdate',settings);
         Ext.apply(this, settings);
-        this.launch();
+        this._addReleaseSelector();
     }
 });

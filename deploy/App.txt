@@ -3,11 +3,11 @@
 <head>
     <title>Feature Hidden Field Updater</title>
     <!--  (c) 2015 Rally Software Development Corp.  All Rights Reserved. -->
-    <!--  Build Date: Tue Nov 24 2015 07:33:01 GMT-0700 (MST) -->
+    <!--  Build Date: Sat Nov 28 2015 21:46:02 GMT-0700 (MST) -->
     
     <script type="text/javascript">
-        var APP_BUILD_DATE = "Tue Nov 24 2015 07:33:01 GMT-0700 (MST)";
-        var CHECKSUM = 12135276435;
+        var APP_BUILD_DATE = "Sat Nov 28 2015 21:46:02 GMT-0700 (MST)";
+        var CHECKSUM = 32436482394;
     </script>
     
     <script type="text/javascript" src="/apps/2.0/sdk.js"></script>
@@ -183,30 +183,39 @@ Ext.define("feature-hidden-field-updater", {
     defaults: { margin: 10 },
     config: {
         defaultSettings: {
-            hiddenStartDateField: 'c_BenchmarkDate',
-            hiddenPlannedDateField: null,
-            hiddenDeployDateField: null
+            hiddenStartDateField: '',
+            stateDateFields: {}
         }
     },
     items: [
-        {xtype:'container',itemId:'selector_box',tpl:'Hello, <tpl>{_refObjectName}</tpl>'},
+        {xtype:'container',itemId:'selector_box'},
         {xtype:'container',itemId:'display_box'}
     ],
-    featureFetch: ['FormattedID','Name'],
+    featureFetch: ['ObjectID','FormattedID','Name'],
     portfolioItemModelName: 'PortfolioItem/Feature',
     portfolioItemModel: null,
+    portfolioItemStates: undefined,
 
     launch: function() {
         this._fetchLowestPortfolioItemModel().then({
             scope: this,
             success: function(modelName){
-                console.log('model',modelName);
                 this.portfolioItemModelName = modelName;
                 Rally.data.ModelFactory.getModel({
                     type: modelName,
                     success: function(model) {
                         this.portfolioItemModel = model;
-                        this._addReleaseSelector();
+                        this._fetchStates(model).then({
+                            success: function(states){
+                                this.portfolioItemStates = states;
+                                this._addReleaseSelector();
+                            },
+                            failure: function(msg){
+                                Rally.ui.notify.Notifier.showError({message: "Failed to retrieve Portfolio Item States: " + msg});
+                            },
+                            scope: this
+
+                        });
                     },
                     failure: function(){
                         Rally.ui.notify.Notifier.showError({message: "Failed to retrieve model: " + modelName});
@@ -220,7 +229,37 @@ Ext.define("feature-hidden-field-updater", {
         });
 
     },
+    _fetchStates: function(model){
+        var deferred = Ext.create('Deft.Deferred');
+        model.getField('State').getAllowedValueStore().load({
+            callback: function(records, operation, success) {
+                if (operation.wasSuccessful()){
+                    deferred.resolve(records);
+                } else {
+                    deferred.reject(operation && operation.error && operation.error.errors.join(','));
+                }
+            }
+        });
+        return deferred;
+    },
+    _validateSettings: function(){
+        this.logger.log('_validateSettings', this.getHiddenStartDateField(), this.getStateDateFieldMapping());
+
+        if (Ext.Object.isEmpty(this.getStateDateFieldMapping()) && this.getHiddenStartDateField().length === 0){
+            return false;
+        }
+        return true;
+    },
     _addReleaseSelector: function(){
+
+        if (!this._validateSettings()){
+            this.down('#selector_box').add({
+                xtype: 'container',
+                html: "Please use the app settings to configure a Start Date field and/or State Field Mappings."
+            });
+            return;
+        }
+
         this.down('#selector_box').removeAll();
         this.down('#selector_box').add({
             xtype: 'rallyreleasecombobox',
@@ -255,41 +294,39 @@ Ext.define("feature-hidden-field-updater", {
                 } else {
                     deferred.reject(operation.error.errors.join(','));
                 }
-
             }
         });
         return deferred;
     },
     _fetchReleaseFeatures: function(cb){
-        this.logger.log('_fetchReleaseFeatures', cb.getValue());
+        this.logger.log('_fetchReleaseFeatures', cb.getValue(),_.values(this.getStateDateFieldMapping()));
 
         var filters = Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; })),
-            fields = this.featureFetch.concat([this.getSetting('hiddenStartDateField')]);
+            fields = this.featureFetch.concat([this.getHiddenStartDateField()]).concat(_.values(this.getStateDateFieldMapping()));
 
+        this.logger.log('fetch', fields);
         var store = Ext.create('Rally.data.wsapi.Store', {
             model: this.portfolioItemModelName,
             fetch: fields,
             filters: filters,
-            limit: 'Infinity',
             listeners: {
                 scope: this,
                 load: function(records){
                     console.log('load records', records);
                 }
             }
-
         });
         this._createFeatureGrid(store);
-
     },
     getHiddenStartDateField: function(){
         return this.getSetting('hiddenStartDateField');
     },
-    getHiddenPlannedDateField: function(){
-        return this.getSetting('hiddenPlannedDateField');
-    },
-    getHiddenDeployDateField: function(){
-        return this.getSetting('hiddenDeployDateField')
+    getStateDateFieldMapping: function(){
+        var setting = this.getSetting('stateDateFields');
+        if (Ext.isString(setting)){
+            setting = Ext.JSON.decode(setting);
+        }
+        return setting || {};
     },
     getFieldDisplayName: function(f){
         return (this.portfolioItemModel.getField(f) && this.portfolioItemModel.getField(f).displayName) || f;
@@ -304,11 +341,11 @@ Ext.define("feature-hidden-field-updater", {
             });
         }
 
-        if (this.getHiddenPlannedDateField() || this.getHiddenDeployDateField()){
+        if (!Ext.Object.isEmpty(this.getStateDateFieldMapping())){
             items.push({
                 xtype: 'rallyrecordmenuitembulkupdatetransitiondates',
-                plannedDateField: this.getHiddenPlannedDateField(),
-                deployDateField: this.getHiddenDeployDateField()
+                stateDateFields: this.getStateDateFieldMapping(),
+                states: this.portfolioItemStates
             });
         }
         return items;
@@ -335,12 +372,10 @@ Ext.define("feature-hidden-field-updater", {
         if (this.getHiddenStartDateField()){
             hiddenFields.push(this.getHiddenStartDateField());
         }
-        if (this.getHiddenPlannedDateField()){
-            hiddenFields.push(this.getHiddenPlannedDateField());
-        }
-        if (this.getHiddenDeployDateField()){
-            hiddenFields.push(this.getHiddenDeployDateField());
-        }
+
+        _.each(this.getStateDateFieldMapping(), function(field, state){
+            hiddenFields.push(field);
+        });
         return hiddenFields;
     },
     _getColumnCfgs: function(){
@@ -349,22 +384,24 @@ Ext.define("feature-hidden-field-updater", {
             fields = this.featureFetch.concat(hiddenFields);
 
          _.each(fields, function(f){
-                var col = { dataIndex: f, text: f };
-                if (Ext.Array.contains(hiddenFields, f)){
-                    col.dataIndex = 'ObjectID';
-                    col.text = this.getFieldDisplayName(f);
-                    col.align = 'left';
-                    col.renderer = function(v,m,r){
-                        return Rally.util.DateTime.formatWithDefault(r.get(f));
-                    }
-                }
-                cols.push(col);
+             if (f != 'ObjectID'){
+                 var col = { dataIndex: f, text: f };
+                 if (Ext.Array.contains(hiddenFields, f)){
+                     col.dataIndex = 'ObjectID';
+                     col.text = this.getFieldDisplayName(f);
+                     col.align = 'left';
+                     col.renderer = function(v,m,r){
+                         return Rally.util.DateTime.formatWithDefault(r.get(f));
+                     }
+                 }
+                 cols.push(col);
+             }
             }, this);
         return cols;
 
     },
     getSettingsFields: function(){
-        return Rally.technicalservices.Settings.getFields(this.portfolioItemModelName);
+        return Rally.technicalservices.Settings.getFields(this.portfolioItemModelName, this.portfolioItemStates);
     },
     getOptions: function() {
         return [
@@ -389,10 +426,256 @@ Ext.define("feature-hidden-field-updater", {
     onSettingsUpdate: function (settings){
         this.logger.log('onSettingsUpdate',settings);
         Ext.apply(this, settings);
-        this.launch();
+        this._addReleaseSelector();
     }
 });
 
+(function () {
+    var Ext = window.Ext4 || window.Ext;
+
+    /**
+     * @private
+     * Mixin to show or hide a control widget based on the toggle state of a GridBoard.
+     */
+    Ext.define('Rally.technicalservices.GridControlShowable', {
+        /**
+         * @cfg {String}
+         * header position to add control to (left|right)
+         */
+        headerPosition: 'right',
+
+        /**
+         * Override to configure control component to add to GridBoard.
+         *
+         * @template
+         * @return {Object|Ext.Component|false} return component config or component to add to control header or return false to add nothing.
+         */
+        getControlCmpConfig: function() {
+            return false;
+        },
+
+        /**
+         * Override to configure where the control component should be inserted in the control header
+         *
+         * @template
+         * @return {Number|false} return insert position of control component or return false to add control in order.
+         */
+        getControlInsertPosition: function() {
+            return false;
+        },
+
+        /**
+         * Returns the control component;
+         *
+         * @returns {Ext.Component}
+         */
+        getControlCmp: function() {
+            return this.controlCmp;
+        },
+
+        /**
+         * Initializes and shows the control component in the header.
+         */
+        showControl: function() {
+            this.cmp.on('toggle', this._showOrHideControl, this);
+            return this._showOrHideControl();
+        },
+
+        _getControlCt: function() {
+            var header = this.cmp.getHeader();
+            if (this.headerPosition === 'right') {
+                return header.getRight();
+            }
+
+            return header.getLeft();
+        },
+
+        _showOrHideControl: function() {
+
+            if (!this.controlCmp) {
+                this._createControlCmp();
+            }
+
+            if (this.controlCmp) {
+              this.controlCmp.show();
+            }
+
+            return this.controlCmp;
+        },
+
+        _createControlCmp: function() {
+            var controlCmpConfig = this.getControlCmpConfig();
+
+            if (controlCmpConfig) {
+                if (!Ext.isFunction(controlCmpConfig.hide)) {
+                    controlCmpConfig.hidden = true;
+                    controlCmpConfig.style = Ext.merge({'float': this.headerPosition}, controlCmpConfig.style);
+                }
+
+                var insertPosition = this.getControlInsertPosition();
+                if (Ext.isNumber(insertPosition)) {
+                    this.controlCmp = this._getControlCt().insert(insertPosition, controlCmpConfig);
+                } else {
+                    this.controlCmp = this._getControlCt().add(controlCmpConfig);
+                }
+            }
+        }
+    });
+})();
+(function () {
+    var Ext = window.Ext4 || window.Ext;
+
+    /**
+     * Adds a Rally.ui.filter.CustomFilterControl component to a Rally.ui.gridboard.GridBoard.
+     *
+     * A full example of using this plugin is available in the [Examples](#!/example/filterable-grid-board) section.
+     */
+    Ext.define('Rally.technicalservices.GridCustomFilterControl', {
+        alias: 'plugin.tsgridcustomfiltercontrol',
+        extend:'Ext.AbstractPlugin',
+        mixins: ['Rally.technicalservices.GridControlShowable'],
+        requires: [
+            'Rally.ui.filter.view.CustomFilterButton',
+            'Rally.data.wsapi.filter.FilterModificationator',
+            'Rally.ui.filter.view.OwnerFilter',
+            'Rally.data.ModelTypes'
+        ],
+        headerPosition: 'left',
+
+        /**
+         * @cfg {Object}
+         * Config for Rally.ui.filter.view.CustomFilterButton.
+         */
+        filterControlConfig: {},
+
+        /**
+         * @cfg {Boolean}
+         * Whether owner filter should apply to children items
+         */
+        filterChildren: true,
+
+        /**
+         * @cfg {Boolean}
+         * Whether to show the additional owner quick filter
+         */
+        showOwnerFilter: false,
+
+        /**
+         * @cfg {Object}
+         * Additional configuration passed to the owner filter
+         */
+        ownerFilterControlConfig: {},
+
+        containerConfig: {},
+
+        init: function(cmp) {
+            this.callParent(arguments);
+            this.cmp = cmp;
+            this.cmp.useFilterCollection = false;
+            this.cmp.on('modeltypeschange', this._onTypeChange, this);
+
+            var control = this.showControl();
+            this.filterButton = control.down('rallycustomfilterbutton');
+            this.ownerFilter = control.down('rallyusersearchcombobox');
+        },
+
+        getControlCmpConfig: function() {
+            var config = Ext.merge({
+                xtype: 'container',
+                width: 72,
+                layout: 'hbox',
+                items: [
+                    Ext.merge({
+                        xtype: 'rallycustomfilterbutton',
+                        context: this.cmp.getContext(),
+                        listeners: {
+                            customfilter: {
+                                fn: this._onFilterButtonStateAvailable,
+                                single: true,
+                                scope: this
+                            }
+                        },
+                        toolTipConfig: {
+                            html: 'Filter',
+                            anchor: 'top',
+                            mouseOffset: [-9, -2]
+                        },
+                        margin: '3 9 3 30'
+                    }, this.filterControlConfig)
+                ]
+            }, this.containerConfig);
+
+            if (this.showOwnerFilter) {
+                config.width += 210;
+
+                config.items.push(Ext.merge({
+                    xtype: 'rallyownerfilter',
+                    margin: '3px 10px 0px 0px',
+                    listConfig: {
+                        width: 200
+                    },
+                    context: this.cmp.getContext(),
+                    width: 200,
+                    clearFilterText: '-- Clear Filter --',
+                    listeners: {
+                        initalvalueset: {
+                            fn: this._onOwnerFilterStateAvailable,
+                            single: true
+                        },
+                        select: this._applyFilter,
+                        scope: this
+                    }
+                }, this.ownerFilterControlConfig));
+            }
+
+            return config;
+        },
+
+        _onFilterButtonStateAvailable: function() {
+            this._filterButtonStateAvailable = true;
+            this.filterButton.on('customfilter', this._applyFilter, this);
+            if(!this.showOwnerFilter || this._ownerFilterStateAvailable) {
+                this._applyFilter();
+            }
+        },
+
+        _onOwnerFilterStateAvailable: function() {
+            this._ownerFilterStateAvailable = true;
+            if(this._filterButtonStateAvailable) {
+                this._applyFilter();
+            }
+        },
+
+        _onTypeChange: function(cmp, types) {
+            var modelNames = _.map(types, function (type) {
+                return type.isModel ? type.get('TypePath') : type;
+            });
+            var typeNames = this._getTypesByNames(modelNames);
+
+            this.filterButton.setModelNames(modelNames);
+            this.filterButton.setTypes(typeNames);
+            this.filterButton.setFilters([]);
+            this.filterButton.indicateNoActiveFilterPresent();
+            this.filterButton.saveState();
+        },
+
+        _applyFilter: function() {
+            var filters = _.compact(Ext.Array.merge(this.filterButton.getFilters(), this.ownerFilter && this.ownerFilter.getFilter())),
+                modifiedFilters = Rally.data.wsapi.filter.FilterModificationator.modifyFilters(filters, this.filterChildren),
+                filterArgs = {
+                    types: this.filterButton.getTypes(),
+                    filters: modifiedFilters
+                };
+            this.cmp.applyCustomFilter(filterArgs);
+        },
+
+        _getTypesByNames: function(modelNames) {
+            return _.map(modelNames, function (modelName) {
+                return Rally.data.ModelTypes.getTypeByName(modelName).toLowerCase();
+            }, this);
+        }
+    });
+})();
 (function() {
     var Ext = window.Ext4 || window.Ext;
 
@@ -419,19 +702,29 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
 
     config: {
         text: 'Update Transition Dates',
+        stateHash: {
+            "Done": "c_Done"
+        },
         handler: function() {
             this._onBulkUpdateClicked();
-        },
+        }
+    },
+
         predicate: function(records) {
             return _.every(records, function(record) {
                 return record.self.isArtifact() || record.self.isTimebox();
             });
         },
 
-        saveRecords: function(records, originalRecords) {
+        saveRecords: function(records) {
+
+            if (records.length === 0){
+                this._showMessage([],[],'');
+                return;
+            }
 
             var promises = _.map(records, function(record){
-                return this._saveRecord(record, args);
+                return this._saveRecord(record);
             }, this);
 
             Deft.Promise.all(promises).then({
@@ -450,9 +743,6 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
                     }, this);
                 }
             });
-
-
-        }
     },
     _saveRecord: function(record){
         var deferred = Ext.create('Deft.Deferred');
@@ -475,9 +765,15 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
         if(successfulRecords.length) {
             me.onSuccess(successfulRecords, unsuccessfulRecords, errorMessage);
         } else {
-            Rally.ui.notify.Notifier.showError({
-                message: resultSet.message
-            });
+            if (unsuccessfulRecords.length > 0){
+                Rally.ui.notify.Notifier.showError({
+                    message: errorMessage
+                });
+            } else {
+                Rally.ui.notify.Notifier.showWarning({
+                    message: "No state transition data was found or updated for the selected record(s)."
+                });
+            }
             Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
         }
 
@@ -494,14 +790,77 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
         });
     },
     _fetchTransitionDates: function(records){
+        var deferred = Ext.create('Deft.Deferred'),
+            objectIds = _.map(records, function(r){ return r.get('ObjectID'); });
 
+        Ext.create('Rally.data.lookback.SnapshotStore',{
+            fetch: ['ObjectID','State','_ValidFrom','_ValidTo',"_PreviousValues.State"],
+            find: {
+                ObjectID: {$in: objectIds}
+            },
+            hydrate: ['State',"_PreviousValues.State"],
+            removeUnauthorizedSnapshots: true,
+            compress: true,
+            limit: 'Infinity',
+            //sorters: [{
+            //    property: '_ValidFrom',
+            //    direction: 'ASC'
+            //}]
+        }).load({
+            callback: function(snapshots, operation){
+                var snapsByOid = this.aggregateSnapsByOidForModel(snapshots);
+                var updatedRecords = this._updateTransitionFields(records, snapsByOid);
+                deferred.resolve(updatedRecords);
+            },
+            scope: this
+        });
+
+        return deferred;
+    },
+    _updateTransitionFields: function(records, snapsByOid){
+        var stateHash = this.stateDateFields,
+        states = _.map(this.states, function(s){ return s.get('StringValue')}),
+            updatedRecords = [];
+
+        _.each(records, function(r){
+            var snaps = snapsByOid[r.get('ObjectID')] || [],
+                currentState = r.get('State').Name,
+                currentIdx = _.indexOf(states, currentState);
+
+                _.each(stateHash, function(field, state){
+                    if (_.indexOf(states, state) <= currentIdx){  //only populate if the current state is greater\equal to the state
+                        _.each(snaps, function(snap){
+
+                            if (snap.State === state && snap["_PreviousValues.State"]!== "" && snap["_PreviousValues.State"] !== state){
+                                var transitionDate = snap._ValidFrom;
+                                r.set(field, transitionDate);
+                                updatedRecords.push(r);
+                            }
+                        });
+                    }
+                });
+        });
+        return updatedRecords;
+    },
+    aggregateSnapsByOidForModel: function(snaps){
+        //Return a hash of objects (key=ObjectID) with all snapshots for the object
+        var snaps_by_oid = {};
+        Ext.each(snaps, function(snap){
+            var oid = snap.ObjectID || snap.get('ObjectID');
+            if (snaps_by_oid[oid] == undefined){
+                snaps_by_oid[oid] = [];
+            }
+            snaps_by_oid[oid].push(snap.getData());
+
+        });
+        return snaps_by_oid;
     },
     /**
      * @override
      * @inheritdoc
      */
     onSuccess: function (successfulRecords, unsuccessfulRecords, errorMessage) {
-
+        var me = this;
         var message = successfulRecords.length + (successfulRecords.length === 1 ? ' item has been updated.' : ' items have been updated.');
 
         if(successfulRecords.length === this.records.length) {
@@ -513,7 +872,8 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
                 message: message + ', but ' + unsuccessfulRecords.length + ' failed: ' + errorMessage
             });
         }
-        Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
+        Ext.callback(me.onActionComplete, null, [[], []]);
+       // Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
     }
 });
 
@@ -741,12 +1101,143 @@ Ext.define('Rally.ui.menu.bulk.SetHiddenDate', {
         }
     });
 
+Ext.define('Rally.technicalservices.settings.StateFieldMapping',{
+    extend: 'Ext.form.field.Base',
+    alias: 'widget.tsstatefieldmappingsettings',
+    config: {
+        value: undefined,
+        states: undefined,
+        model: undefined,
+        decodedValue: {}
+    },
+    fieldSubTpl: '<div id="{id}" class="settings-grid"></div>',
+
+    width: 400,
+    cls: 'column-settings',
+
+    onDestroy: function() {
+        if (this._grid) {
+            this._grid.destroy();
+            delete this._grid;
+        }
+        this.callParent(arguments);
+    },
+
+    onRender: function() {
+        var decodedValue = {};
+        if (this.value && !_.isEmpty(this.value)){
+            decodedValue = Ext.JSON.decode(this.value);
+        }
+        this.callParent(arguments);
+
+        var data = [];
+
+        _.each(this.states, function(s){
+            var field = null,
+                stateName = s.get('StringValue');
+
+            if (stateName && stateName.length > 0){
+                if (decodedValue[stateName]){
+                    field = decodedValue[stateName];
+                }
+                data.push({state: stateName, field: field});
+            }
+        }, this);
+
+        this._store = Ext.create('Ext.data.Store', {
+            fields: ['state', 'field'],
+            data: data
+        });
+
+        this._grid = Ext.create('Rally.ui.grid.Grid', {
+            autoWidth: true,
+            renderTo: this.inputEl,
+            columnCfgs: this._getColumnCfgs(),
+            showPagingToolbar: false,
+            showRowActionsColumn: false,
+            store: this._store,
+            width: this.getWidth() * 0.90,
+            editingConfig: {
+                publishMessages: false
+            }
+        });
+        this.fireEvent('ready');
+    },
+    _getColumnCfgs: function() {
+         var columns = [
+            {
+                text: 'State',
+                dataIndex: 'state',
+                flex: 1
+            },
+            {
+                text: 'Transition Date Field',
+                dataIndex: 'field',
+                flex: 1,
+                editor: {
+                    xtype: 'tshiddendatefieldcombobox',
+                    model: this.model
+                }
+            }];
+        return columns;
+    },
+    /**
+     * When a form asks for the data this field represents,
+     * give it the name of this field and the ref of the selected project (or an empty string).
+     * Used when persisting the value of this field.
+     * @return {Object}
+     */
+    getSubmitData: function() {
+        var data = {};
+        data[this.name] = Ext.JSON.encode(this._buildSettingValue());
+        return data;
+    },
+    _buildSettingValue: function() {
+        var mappings = {};
+        this._store.each(function(record) {
+            if (record.get('state') && record.get('field')) {
+                mappings[record.get('state')] = record.get('field');
+            }
+        }, this);
+        return mappings;
+    },
+
+    getErrors: function() {
+        var errors = [];
+        //todo validate they aren't using the same field for multiple states
+        return errors;
+    },
+    validate : function() {
+        var me = this,
+            isValid = me.isValid();
+        if (isValid !== me.wasValid) {
+            me.wasValid = isValid;
+            me.fireEvent('validitychange', me, isValid);
+        }
+        if (!isValid){
+            var html = this.getErrors().join('<br/>');
+            Ext.create('Rally.ui.tooltip.ToolTip', {
+                target : this.getEl(),
+                html: '<div class="tsinvalid">' + html + '</div>',
+                autoShow: true,
+                anchor: 'bottom',
+                destroyAfterHide: true
+            });
+
+        }
+
+        return isValid;
+    },
+    setValue: function(value) {
+        this.callParent(arguments);
+        this._value = value;
+    }
+});
 Ext.define('Rally.technicalservices.Settings',{
     singleton: true,
 
-    getFields: function(modelName){
+    getFields: function(modelName, states){
         var labelWidth = 150;
-        //todo make fields writable date fields only and show hidden fields
 
         return [{
             xtype: 'tshiddendatefieldcombobox',
@@ -754,21 +1245,17 @@ Ext.define('Rally.technicalservices.Settings',{
             model: modelName,
             labelWidth: labelWidth,
             labelAlign: 'right',
-            fieldLabel: 'Set Start Date Field'
+            fieldLabel: 'Set Start Date Field',
+            readyEvent: 'ready'
         },{
-            xtype: 'tshiddendatefieldcombobox',
-            name: 'hiddenPlannedDateField',
-            labelWidth: labelWidth,
+            xtype: 'tsstatefieldmappingsettings',
+            states: states,
             model: modelName,
-            labelAlign: 'right',
-            fieldLabel: 'Update Planned Date Field'
-        },{
-            xtype: 'tshiddendatefieldcombobox',
-            name: 'hiddenDeployDateField',
-            labelWidth: labelWidth,
-            model: modelName,
-            labelAlign: 'right',
-            fieldLabel: 'Update Deploy Date Field'
+            name: 'stateDateFields',
+            readyEvent: 'ready',
+            fieldLabel: 'State Transition Date Field Mapping',
+            margin: 15,
+            labelAlign: 'top'
         }];
     }
 });
