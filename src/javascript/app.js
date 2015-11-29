@@ -10,7 +10,7 @@ Ext.define("feature-hidden-field-updater", {
         }
     },
     items: [
-        {xtype:'container',itemId:'selector_box'},
+        {xtype:'container',itemId:'selector_box', layout: {type: 'hbox'}},
         {xtype:'container',itemId:'display_box'}
     ],
     featureFetch: ['ObjectID','FormattedID','Name'],
@@ -120,23 +120,22 @@ Ext.define("feature-hidden-field-updater", {
         });
         return deferred;
     },
+    _getReleaseFilters: function(){
+        var cb = this.down('rallyreleasecombobox');
+
+        return Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; }));
+    },
     _fetchReleaseFeatures: function(cb){
         this.logger.log('_fetchReleaseFeatures', cb.getValue(),_.values(this.getStateDateFieldMapping()));
 
-        var filters = Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; })),
+        var filters = this._getReleaseFilters(),
             fields = this.featureFetch.concat([this.getHiddenStartDateField()]).concat(_.values(this.getStateDateFieldMapping()));
 
         this.logger.log('fetch', fields);
         var store = Ext.create('Rally.data.wsapi.Store', {
             model: this.portfolioItemModelName,
             fetch: fields,
-            filters: filters,
-            listeners: {
-                scope: this,
-                load: function(records){
-                    console.log('load records', records);
-                }
-            }
+            filters: filters
         });
         this._createFeatureGrid(store);
     },
@@ -184,8 +183,13 @@ Ext.define("feature-hidden-field-updater", {
             enableBulkEdit: true,
             bulkEditConfig: {
                 items: bulkConfigItems
-            }
-
+            },
+            plugins: [{
+                ptype: 'tsgridcustomfiltercontrol',
+                headerContainer: this.down('#selector_box'),
+                modelNames: [this.portfolioItemModelName],
+                permanentFilters: this._getReleaseFilters()
+            }]
         });
     },
     _getHiddenFields: function(){
@@ -194,7 +198,6 @@ Ext.define("feature-hidden-field-updater", {
         if (this.getHiddenStartDateField()){
             hiddenFields.push(this.getHiddenStartDateField());
         }
-
         _.each(this.getStateDateFieldMapping(), function(field, state){
             hiddenFields.push(field);
         });
@@ -234,7 +237,6 @@ Ext.define("feature-hidden-field-updater", {
             }
         ];
     },
-    
     _launchInfo: function() {
         if ( this.about_dialog ) { this.about_dialog.destroy(); }
         this.about_dialog = Ext.create('Rally.technicalservices.InfoLink',{});

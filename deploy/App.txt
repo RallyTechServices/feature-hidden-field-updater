@@ -3,11 +3,11 @@
 <head>
     <title>Feature Hidden Field Updater</title>
     <!--  (c) 2015 Rally Software Development Corp.  All Rights Reserved. -->
-    <!--  Build Date: Sat Nov 28 2015 21:46:02 GMT-0700 (MST) -->
+    <!--  Build Date: Sun Nov 29 2015 00:16:58 GMT-0700 (MST) -->
     
     <script type="text/javascript">
-        var APP_BUILD_DATE = "Sat Nov 28 2015 21:46:02 GMT-0700 (MST)";
-        var CHECKSUM = 32436482394;
+        var APP_BUILD_DATE = "Sun Nov 29 2015 00:16:58 GMT-0700 (MST)";
+        var CHECKSUM = 32921516305;
     </script>
     
     <script type="text/javascript" src="/apps/2.0/sdk.js"></script>
@@ -188,7 +188,7 @@ Ext.define("feature-hidden-field-updater", {
         }
     },
     items: [
-        {xtype:'container',itemId:'selector_box'},
+        {xtype:'container',itemId:'selector_box', layout: {type: 'hbox'}},
         {xtype:'container',itemId:'display_box'}
     ],
     featureFetch: ['ObjectID','FormattedID','Name'],
@@ -298,23 +298,22 @@ Ext.define("feature-hidden-field-updater", {
         });
         return deferred;
     },
+    _getReleaseFilters: function(){
+        var cb = this.down('rallyreleasecombobox');
+
+        return Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; }));
+    },
     _fetchReleaseFeatures: function(cb){
         this.logger.log('_fetchReleaseFeatures', cb.getValue(),_.values(this.getStateDateFieldMapping()));
 
-        var filters = Rally.data.wsapi.Filter.or(_.map(cb.getValue(), function(releaseName){ return {property: 'Release.Name', value: releaseName}; })),
+        var filters = this._getReleaseFilters(),
             fields = this.featureFetch.concat([this.getHiddenStartDateField()]).concat(_.values(this.getStateDateFieldMapping()));
 
         this.logger.log('fetch', fields);
         var store = Ext.create('Rally.data.wsapi.Store', {
             model: this.portfolioItemModelName,
             fetch: fields,
-            filters: filters,
-            listeners: {
-                scope: this,
-                load: function(records){
-                    console.log('load records', records);
-                }
-            }
+            filters: filters
         });
         this._createFeatureGrid(store);
     },
@@ -362,8 +361,13 @@ Ext.define("feature-hidden-field-updater", {
             enableBulkEdit: true,
             bulkEditConfig: {
                 items: bulkConfigItems
-            }
-
+            },
+            plugins: [{
+                ptype: 'tsgridcustomfiltercontrol',
+                headerContainer: this.down('#selector_box'),
+                modelNames: [this.portfolioItemModelName],
+                permanentFilters: this._getReleaseFilters()
+            }]
         });
     },
     _getHiddenFields: function(){
@@ -372,7 +376,6 @@ Ext.define("feature-hidden-field-updater", {
         if (this.getHiddenStartDateField()){
             hiddenFields.push(this.getHiddenStartDateField());
         }
-
         _.each(this.getStateDateFieldMapping(), function(field, state){
             hiddenFields.push(field);
         });
@@ -412,7 +415,6 @@ Ext.define("feature-hidden-field-updater", {
             }
         ];
     },
-    
     _launchInfo: function() {
         if ( this.about_dialog ) { this.about_dialog.destroy(); }
         this.about_dialog = Ext.create('Rally.technicalservices.InfoLink',{});
@@ -442,7 +444,7 @@ Ext.define("feature-hidden-field-updater", {
          * @cfg {String}
          * header position to add control to (left|right)
          */
-        headerPosition: 'right',
+        headerPosition: 'left',
 
         /**
          * Override to configure control component to add to GridBoard.
@@ -477,30 +479,19 @@ Ext.define("feature-hidden-field-updater", {
          * Initializes and shows the control component in the header.
          */
         showControl: function() {
-            this.cmp.on('toggle', this._showOrHideControl, this);
-            return this._showOrHideControl();
-        },
-
-        _getControlCt: function() {
-            var header = this.cmp.getHeader();
-            if (this.headerPosition === 'right') {
-                return header.getRight();
-            }
-
-            return header.getLeft();
-        },
-
-        _showOrHideControl: function() {
-
             if (!this.controlCmp) {
                 this._createControlCmp();
             }
 
             if (this.controlCmp) {
-              this.controlCmp.show();
+                this.controlCmp.show();
             }
 
             return this.controlCmp;
+        },
+
+        _getControlCt: function() {
+            return this.headerContainer;
         },
 
         _createControlCmp: function() {
@@ -512,12 +503,11 @@ Ext.define("feature-hidden-field-updater", {
                     controlCmpConfig.style = Ext.merge({'float': this.headerPosition}, controlCmpConfig.style);
                 }
 
-                var insertPosition = this.getControlInsertPosition();
-                if (Ext.isNumber(insertPosition)) {
-                    this.controlCmp = this._getControlCt().insert(insertPosition, controlCmpConfig);
-                } else {
-                    this.controlCmp = this._getControlCt().add(controlCmpConfig);
+                if (this._getControlCt().down(controlCmpConfig.xtype)){
+                    this._getControlCt().down(controlCmpConfig.xtype).destroy();
                 }
+                this.controlCmp = this._getControlCt().add(controlCmpConfig);
+
             }
         }
     });
@@ -572,11 +562,13 @@ Ext.define("feature-hidden-field-updater", {
             this.callParent(arguments);
             this.cmp = cmp;
             this.cmp.useFilterCollection = false;
-            this.cmp.on('modeltypeschange', this._onTypeChange, this);
 
             var control = this.showControl();
+
             this.filterButton = control.down('rallycustomfilterbutton');
             this.ownerFilter = control.down('rallyusersearchcombobox');
+
+            this._onTypeChange(cmp, this.modelNames);
         },
 
         getControlCmpConfig: function() {
@@ -660,15 +652,28 @@ Ext.define("feature-hidden-field-updater", {
         },
 
         _applyFilter: function() {
-            var filters = _.compact(Ext.Array.merge(this.filterButton.getFilters(), this.ownerFilter && this.ownerFilter.getFilter())),
+
+              var filters = _.compact(Ext.Array.merge(this.filterButton.getFilters(), this.ownerFilter && this.ownerFilter.getFilter())),
                 modifiedFilters = Rally.data.wsapi.filter.FilterModificationator.modifyFilters(filters, this.filterChildren),
                 filterArgs = {
                     types: this.filterButton.getTypes(),
                     filters: modifiedFilters
                 };
-            this.cmp.applyCustomFilter(filterArgs);
+            this._applyFilters(filterArgs);
         },
+        _applyFilters: function(filterObj){
 
+            var permanentFilters = this.permanentFilters || [];
+
+            var extraFilters = filterObj.filters || [];
+
+            this.cmp.store.clearFilter(true);
+            var filters =  _.compact(Ext.Array.merge(
+                        permanentFilters,
+                        extraFilters));
+
+            this.cmp.store.filter(filters);
+        },
         _getTypesByNames: function(modelNames) {
             return _.map(modelNames, function (modelName) {
                 return Rally.data.ModelTypes.getTypeByName(modelName).toLowerCase();
