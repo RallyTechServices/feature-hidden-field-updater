@@ -5,19 +5,29 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
 
     config: {
         text: 'Update Transition Dates',
+        stateHash: {
+            "Done": "c_Done"
+        },
         handler: function() {
             this._onBulkUpdateClicked();
-        },
+        }
+    },
+
         predicate: function(records) {
             return _.every(records, function(record) {
                 return record.self.isArtifact() || record.self.isTimebox();
             });
         },
 
-        saveRecords: function(records, originalRecords) {
+        saveRecords: function(records) {
+
+            if (records.length === 0){
+                this._showMessage([],[],'');
+                return;
+            }
 
             var promises = _.map(records, function(record){
-                return this._saveRecord(record, args);
+                return this._saveRecord(record);
             }, this);
 
             Deft.Promise.all(promises).then({
@@ -36,9 +46,6 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
                     }, this);
                 }
             });
-
-
-        }
     },
     _saveRecord: function(record){
         var deferred = Ext.create('Deft.Deferred');
@@ -61,9 +68,15 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
         if(successfulRecords.length) {
             me.onSuccess(successfulRecords, unsuccessfulRecords, errorMessage);
         } else {
-            Rally.ui.notify.Notifier.showError({
-                message: resultSet.message
-            });
+            if (unsuccessfulRecords.length > 0){
+                Rally.ui.notify.Notifier.showError({
+                    message: errorMessage
+                });
+            } else {
+                Rally.ui.notify.Notifier.showWarning({
+                    message: "No state transition data was found or updated for the selected record(s)."
+                });
+            }
             Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
         }
 
@@ -80,14 +93,77 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
         });
     },
     _fetchTransitionDates: function(records){
+        var deferred = Ext.create('Deft.Deferred'),
+            objectIds = _.map(records, function(r){ return r.get('ObjectID'); });
 
+        Ext.create('Rally.data.lookback.SnapshotStore',{
+            fetch: ['ObjectID','State','_ValidFrom','_ValidTo',"_PreviousValues.State"],
+            find: {
+                ObjectID: {$in: objectIds}
+            },
+            hydrate: ['State',"_PreviousValues.State"],
+            removeUnauthorizedSnapshots: true,
+            compress: true,
+            limit: 'Infinity',
+            //sorters: [{
+            //    property: '_ValidFrom',
+            //    direction: 'ASC'
+            //}]
+        }).load({
+            callback: function(snapshots, operation){
+                var snapsByOid = this.aggregateSnapsByOidForModel(snapshots);
+                var updatedRecords = this._updateTransitionFields(records, snapsByOid);
+                deferred.resolve(updatedRecords);
+            },
+            scope: this
+        });
+
+        return deferred;
+    },
+    _updateTransitionFields: function(records, snapsByOid){
+        var stateHash = this.stateDateFields,
+        states = _.map(this.states, function(s){ return s.get('StringValue')}),
+            updatedRecords = [];
+
+        _.each(records, function(r){
+            var snaps = snapsByOid[r.get('ObjectID')] || [],
+                currentState = r.get('State').Name,
+                currentIdx = _.indexOf(states, currentState);
+
+                _.each(stateHash, function(field, state){
+                    if (_.indexOf(states, state) <= currentIdx){  //only populate if the current state is greater\equal to the state
+                        _.each(snaps, function(snap){
+
+                            if (snap.State === state && snap["_PreviousValues.State"]!== "" && snap["_PreviousValues.State"] !== state){
+                                var transitionDate = snap._ValidFrom;
+                                r.set(field, transitionDate);
+                                updatedRecords.push(r);
+                            }
+                        });
+                    }
+                });
+        });
+        return updatedRecords;
+    },
+    aggregateSnapsByOidForModel: function(snaps){
+        //Return a hash of objects (key=ObjectID) with all snapshots for the object
+        var snaps_by_oid = {};
+        Ext.each(snaps, function(snap){
+            var oid = snap.ObjectID || snap.get('ObjectID');
+            if (snaps_by_oid[oid] == undefined){
+                snaps_by_oid[oid] = [];
+            }
+            snaps_by_oid[oid].push(snap.getData());
+
+        });
+        return snaps_by_oid;
     },
     /**
      * @override
      * @inheritdoc
      */
     onSuccess: function (successfulRecords, unsuccessfulRecords, errorMessage) {
-
+        var me = this;
         var message = successfulRecords.length + (successfulRecords.length === 1 ? ' item has been updated.' : ' items have been updated.');
 
         if(successfulRecords.length === this.records.length) {
@@ -99,6 +175,7 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
                 message: message + ', but ' + unsuccessfulRecords.length + ' failed: ' + errorMessage
             });
         }
-        Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
+        Ext.callback(me.onActionComplete, null, [[], []]);
+       // Ext.callback(me.onActionComplete, null, [successfulRecords, unsuccessfulRecords]);
     }
 });

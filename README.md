@@ -1,69 +1,23 @@
 #Feature Hidden Field Updater
 
-## Development Notes
+The purpose of this highly customized app is to update hidden (or visible) fields on the lowest level portfolio item model.  
+The goal is to be able to set fields with a date that is not editable in the feature details page (the way that is controlled is by making the fields "hidden").  
+The dates in the hidden fields are intended for exporting purposes to a third party analysis tool.  
 
-### First Load
+This app is a grid that contains 2 new bulk actions on the gear menu (this means that the items must be selected in order to see the menu items on the gear menu):
 
-If you've just downloaded this from github and you want to do development, 
-you're going to need to have these installed:
+######*Set Planned Date...*  
+This allows the user to set a date in a hidden custom date field.  The purpose is to be able to use this to set the planned date for the feature.  
 
- * node.js
- * grunt-cli
- * grunt-init
- 
-Since you're getting this from github, we assume you have the command line
-version of git also installed.  If not, go get git.
+######*Update Transition Dates*
+This menu item updates any number of date custom fields with the date that the item last transitioned into the mapped state.  
+* If the item has not yet reached the mapped state (but did transition into it in the past), the custom date field will not be populated for that state.  
+* If an item has transitioned into the state multiple times, the date populated will be the latest date that the item has transitioned into the state.  
 
-If you have those three installed, just type this in the root directory here
-to get set up to develop:
+![ScreenShot](/images/feature-hidden-field-updater.png)
+      
+The custom date fields that are populated can be configured in the App Settings:  
+      
+![ScreenShot](/images/feature-hidden-field-updater-app-settings.png)
 
-  npm install
-
-### Structure
-
-  * src/javascript:  All the JS files saved here will be compiled into the 
-  target html file
-  * src/style: All of the stylesheets saved here will be compiled into the 
-  target html file
-  * test/fast: Fast jasmine tests go here.  There should also be a helper 
-  file that is loaded first for creating mocks and doing other shortcuts
-  (fastHelper.js) **Tests should be in a file named <something>-spec.js**
-  * test/slow: Slow jasmine tests go here.  There should also be a helper
-  file that is loaded first for creating mocks and doing other shortcuts 
-  (slowHelper.js) **Tests should be in a file named <something>-spec.js**
-  * templates: This is where templates that are used to create the production
-  and debug html files live.  The advantage of using these templates is that
-  you can configure the behavior of the html around the JS.
-  * config.json: This file contains the configuration settings necessary to
-  create the debug and production html files.  Server is only used for debug,
-  name, className and sdk are used for both.
-  * package.json: This file lists the dependencies for grunt
-  * auth.json: This file should NOT be checked in.  Create this to run the
-  slow test specs.  It should look like:
-    {
-        "username":"you@company.com",
-        "password":"secret"
-    }
-  
-### Usage of the grunt file
-####Tasks
-    
-##### grunt debug
-
-Use grunt debug to create the debug html file.  You only need to run this when you have added new files to
-the src directories.
-
-##### grunt build
-
-Use grunt build to create the production html file.  We still have to copy the html file to a panel to test.
-
-##### grunt test-fast
-
-Use grunt test-fast to run the Jasmine tests in the fast directory.  Typically, the tests in the fast 
-directory are more pure unit tests and do not need to connect to Rally.
-
-##### grunt test-slow
-
-Use grunt test-slow to run the Jasmine tests in the slow directory.  Typically, the tests in the slow
-directory are more like integration tests in that they require connecting to Rally and interacting with
-data.
+If no fields are mapped for the feature states, then the "Update Transition Fields" menu item will not be available during a bulk update.  

@@ -1,9 +1,8 @@
 Ext.define('Rally.technicalservices.Settings',{
     singleton: true,
 
-    getFields: function(modelName){
+    getFields: function(modelName, states){
         var labelWidth = 150;
-        //todo make fields writable date fields only and show hidden fields
 
         return [{
             xtype: 'tshiddendatefieldcombobox',
@@ -11,21 +10,17 @@ Ext.define('Rally.technicalservices.Settings',{
             model: modelName,
             labelWidth: labelWidth,
             labelAlign: 'right',
-            fieldLabel: 'Set Start Date Field'
+            fieldLabel: 'Set Start Date Field',
+            readyEvent: 'ready'
         },{
-            xtype: 'tshiddendatefieldcombobox',
-            name: 'hiddenPlannedDateField',
-            labelWidth: labelWidth,
+            xtype: 'tsstatefieldmappingsettings',
+            states: states,
             model: modelName,
-            labelAlign: 'right',
-            fieldLabel: 'Update Planned Date Field'
-        },{
-            xtype: 'tshiddendatefieldcombobox',
-            name: 'hiddenDeployDateField',
-            labelWidth: labelWidth,
-            model: modelName,
-            labelAlign: 'right',
-            fieldLabel: 'Update Deploy Date Field'
+            name: 'stateDateFields',
+            readyEvent: 'ready',
+            fieldLabel: 'State Transition Date Field Mapping',
+            margin: 15,
+            labelAlign: 'top'
         }];
     }
 });
