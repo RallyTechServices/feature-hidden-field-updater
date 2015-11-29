@@ -6,7 +6,7 @@ The dates in the hidden fields are intended for exporting purposes to a third pa
 
 This app is a grid that contains 2 new bulk actions on the gear menu (this means that the items must be selected in order to see the menu items on the gear menu):
 
-######*Set Start Date...*  
+######*Set Planned Date...*  
 This allows the user to set a date in a hidden custom date field.  The purpose is to be able to use this to set the planned date for the feature.  
 
 ######*Update Transition Dates*
