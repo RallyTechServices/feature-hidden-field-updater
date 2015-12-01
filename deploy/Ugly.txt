@@ -3,10 +3,10 @@
 <head>
     <title>Feature Hidden Field Updater</title>
     <!--  (c) 2015 Rally Software Development Corp.  All Rights Reserved. -->
-    <!--  Build Date: Sun Nov 29 2015 15:26:29 GMT-0700 (MST) -->
+    <!--  Build Date: Mon Nov 30 2015 17:05:26 GMT-0700 (MST) -->
     
     <script type="text/javascript">
-        var APP_BUILD_DATE = "Sun Nov 29 2015 15:26:29 GMT-0700 (MST)";
+        var APP_BUILD_DATE = "Mon Nov 30 2015 17:05:26 GMT-0700 (MST)";
         var CHECKSUM = [%= checksum %];
     </script>
     

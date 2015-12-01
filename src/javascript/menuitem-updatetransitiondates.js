@@ -127,8 +127,8 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
 
         _.each(records, function(r){
             var snaps = snapsByOid[r.get('ObjectID')] || [],
-                currentState = r.get('State').Name,
-                currentIdx = _.indexOf(states, currentState);
+                currentState = (r.get('State') && r.get('State').Name) || null,
+                currentIdx = currentState ? _.indexOf(states, currentState) : -1;
 
                 _.each(stateHash, function(field, state){
                     if (_.indexOf(states, state) <= currentIdx){  //only populate if the current state is greater\equal to the state
@@ -171,8 +171,13 @@ Ext.define('Rally.ui.menu.bulk.UpdateTransitionDates', {
                 message: message + '.'
             });
         } else {
+            if (errorMessage){
+                errorMessage = " there was an error: " + errorMessage;
+            } else {
+                errorMessage = " there was no transition data for the configured States."
+            }
             Rally.ui.notify.Notifier.showWarning({
-                message: message + ', but ' + unsuccessfulRecords.length + ' failed: ' + errorMessage
+                message: message + ', and ' + unsuccessfulRecords.length + ' were not updated because ' + errorMessage
             });
         }
         Ext.callback(me.onActionComplete, null, [[], []]);
